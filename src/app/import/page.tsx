@@ -15,8 +15,12 @@ type Draft = {
   include: boolean;
   from: string; // person id, or "new:<name>"
   to: string;
-  kind: "loan" | "repayment";
+  kind: "loan" | "repayment" | "conversion";
   asset_type: AssetType;
+  to_asset_type: AssetType | null;
+  to_asset_code: string;
+  to_amount: string;
+  quote: string;
   asset_code: string;
   unit: string;
   amount: string;
@@ -26,7 +30,7 @@ type Draft = {
 };
 
 /** Shrink a photo so uploads stay small and fast. */
-async function toJpeg(file: File): Promise<Img> {
+async function toJpeg(file: Blob): Promise<Img> {
   const bmp = await createImageBitmap(file);
   const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
   const c = document.createElement("canvas");
@@ -37,13 +41,29 @@ async function toJpeg(file: File): Promise<Img> {
   return { media_type: "image/jpeg", data: url.split(",")[1], preview: url };
 }
 
-async function readChatFile(file: File): Promise<string> {
+async function readChatFile(file: File): Promise<{ text: string; images: Blob[] }> {
   if (file.name.toLowerCase().endsWith(".zip")) {
     const zip = await JSZip.loadAsync(file);
-    const txt = Object.values(zip.files).find((f) => !f.dir && f.name.toLowerCase().endsWith(".txt"));
-    return txt ? await txt.async("string") : "";
+    const files = Object.values(zip.files).filter((f) => !f.dir);
+    const txt = files.find((f) => f.name.toLowerCase().endsWith(".txt"));
+    const imgs = files.filter((f) => /\.(jpe?g|png|webp)$/i.test(f.name)).slice(0, 6);
+    return {
+      text: txt ? await txt.async("string") : "",
+      images: await Promise.all(imgs.map((f) => f.async("blob"))),
+    };
   }
-  return await file.text();
+  return { text: await file.text(), images: [] };
+}
+
+/** Sender names in a WhatsApp export (iPhone "[date, time] Name: msg" and Android "date, time - Name: msg"). */
+function chatSenders(text: string): string[] {
+  const counts = new Map<string, number>();
+  const re = /^\u200e?(?:\[[^\]]+\]\s*|\d{1,4}[\/.\-]\d{1,2}[\/.\-]\d{1,4},?\s[^-]{3,15}\s-\s)([^:\n]{1,60}):\s/gm;
+  for (const m of text.matchAll(re)) {
+    const n = m[1].replace(/[\u200e\u202a-\u202e]/g, "").trim();
+    if (n) counts.set(n, (counts.get(n) ?? 0) + 1);
+  }
+  return [...counts].filter(([, c]) => c >= 1).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([n]) => n);
 }
 
 export default function ImportPage() {
@@ -60,6 +80,8 @@ function ImportBody() {
   const [images, setImages] = useState<Img[]>([]);
   const [chatName, setChatName] = useState("");
   const [chatText, setChatText] = useState("");
+  const [chatImages, setChatImages] = useState<Img[]>([]);
+  const [senderMap, setSenderMap] = useState<Record<string, string>>({}); // sender -> "ME" | person id | "new" | "IGNORE"
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -89,7 +111,11 @@ function ImportBody() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
         body: JSON.stringify({
-          images: images.map(({ media_type, data }) => ({ media_type, data })),
+          images: [...images, ...chatImages].slice(0, 8).map(({ media_type, data }) => ({ media_type, data })),
+          senders: Object.entries(senderMap).map(([sender, v]) => ({
+            sender,
+            as: v === "ME" || v === "IGNORE" ? v : v === "new" ? sender : people.find((p) => p.id === v)?.name ?? sender,
+          })),
           text: [chatText, pasted].filter(Boolean).join("\n\n"),
           myName: me.name,
           people: people.filter((p) => p.id !== me.id).map((p) => p.name),
@@ -112,6 +138,10 @@ function ImportBody() {
         asset_code: e.asset_code,
         unit: e.unit,
         amount: String(e.amount),
+        to_asset_type: e.kind === "conversion" ? e.to_asset_type : null,
+        to_asset_code: e.to_asset_code ?? "",
+        to_amount: e.to_amount != null ? String(e.to_amount) : "",
+        quote: e.source_quote ?? "",
         date: /^\d{4}-\d{2}-\d{2}$/.test(e.date) ? e.date : new Date().toISOString().slice(0, 10),
         note: e.note,
         low: e.confidence === "low",
@@ -143,11 +173,13 @@ function ImportBody() {
       family_id: family.id,
       from_person: idOf(d.from),
       to_person: idOf(d.to),
-      kind: d.kind,
       asset_type: d.asset_type,
       asset_code: d.asset_type === "share" ? d.asset_code.trim().toUpperCase() : d.asset_code.trim(),
       unit: d.asset_type === "gold" || d.asset_type === "silver" ? "g" : d.asset_type === "share" ? "shares" : d.asset_type === "other" ? d.unit.trim() : "",
       amount: Number(d.amount),
+      ...(d.kind === "conversion" && d.to_asset_type && Number(d.to_amount) > 0
+        ? { kind: "conversion", to_asset_type: d.to_asset_type, to_asset_code: d.to_asset_code.trim(), to_unit: d.to_asset_type === "gold" || d.to_asset_type === "silver" ? "g" : d.to_asset_type === "share" ? "shares" : "", to_amount: Number(d.to_amount) }
+        : { kind: d.kind === "conversion" ? "loan" : d.kind }),
       note: d.note.trim(),
       entry_date: d.date,
     }));
@@ -196,6 +228,7 @@ function ImportBody() {
               <select className={sel} value={d.kind} onChange={(e) => update(i, { kind: e.target.value as Draft["kind"] })}>
                 <option value="loan">{t("kindLoan")}</option>
                 <option value="repayment">{t("kindRepay")}</option>
+                <option value="conversion">{t("kindConvert")}</option>
               </select>
               <select className={sel} value={d.asset_type} onChange={(e) => update(i, { asset_type: e.target.value as AssetType })}>
                 {(["currency", "gold", "silver", "share", "other"] as AssetType[]).map((ty) => <option key={ty} value={ty}>{t(ty as Key)}</option>)}
@@ -214,7 +247,18 @@ function ImportBody() {
               <input className={`${sel} font-bold`} dir="ltr" inputMode="decimal" value={d.amount} onChange={(e) => update(i, { amount: e.target.value })} />
               <input className={sel} type="date" value={d.date} onChange={(e) => update(i, { date: e.target.value })} />
               <input className={sel} placeholder={t("note")} value={d.note} onChange={(e) => update(i, { note: e.target.value })} />
+              {d.kind === "conversion" && (
+                <>
+                  <label className="col-span-2 text-sm text-stone-600">{t("convertTo")}</label>
+                  <select className={sel} value={d.to_asset_type ?? "currency"} onChange={(e) => update(i, { to_asset_type: e.target.value as AssetType })}>
+                    {(["currency", "gold", "silver", "share", "other"] as AssetType[]).map((ty) => <option key={ty} value={ty}>{t(ty as Key)}</option>)}
+                  </select>
+                  <input className={sel} dir="ltr" value={d.to_asset_code} onChange={(e) => update(i, { to_asset_code: e.target.value })} />
+                  <input className={`${sel} col-span-2 font-bold`} dir="ltr" inputMode="decimal" value={d.to_amount} onChange={(e) => update(i, { to_amount: e.target.value })} />
+                </>
+              )}
             </div>
+            {d.quote && <p className="rounded-lg bg-stone-50 p-2 text-sm text-stone-600"><span className="text-stone-400">{t("sourceText")}: </span>{d.quote}</p>}
           </Card>
         ))}
         {err && <p className="text-red-700">{err}</p>}
@@ -227,7 +271,7 @@ function ImportBody() {
   }
 
   // ---------- Input step ----------
-  const hasInput = images.length > 0 || chatText.trim() || pasted.trim();
+  const hasInput = images.length > 0 || chatImages.length > 0 || chatText.trim() || pasted.trim();
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-bold">{t("importTitle")}</h2>
@@ -260,9 +304,37 @@ function ImportBody() {
         <input ref={chatRef} type="file" accept=".txt,.zip,text/plain,application/zip" hidden onChange={async (e) => {
           const f = e.target.files?.[0]; e.target.value = "";
           if (!f) return;
-          setChatName(f.name); setChatText(await readChatFile(f));
+          const { text, images: blobs } = await readChatFile(f);
+          setChatName(f.name); setChatText(text);
+          const imgs: Img[] = [];
+          for (const b of blobs) { try { imgs.push(await toJpeg(b)); } catch {} }
+          setChatImages(imgs);
+          const map: Record<string, string> = {};
+          for (const n of chatSenders(text)) {
+            const hit = people.find((p) => p.name.trim().toLowerCase() === n.toLowerCase());
+            map[n] = hit ? (hit.id === me.id ? "ME" : hit.id) : "new";
+          }
+          setSenderMap(map);
         }} />
-        {chatName && <button className="text-sm text-red-700" onClick={() => { setChatName(""); setChatText(""); }}>{t("removeFile")}</button>}
+        {chatName && <button className="text-sm text-red-700" onClick={() => { setChatName(""); setChatText(""); setChatImages([]); setSenderMap({}); }}>{t("removeFile")}</button>}
+        {chatImages.length > 0 && <p className="text-sm text-stone-600">🖼 {chatImages.length} {t("chatPhotos")}</p>}
+        {Object.keys(senderMap).length > 0 && (
+          <div className="space-y-2 rounded-xl bg-amber-50 p-3">
+            <p className="font-semibold">{t("whoIsWho")}</p>
+            {Object.entries(senderMap).map(([sender, v]) => (
+              <div key={sender} className="flex items-center gap-2">
+                <span className="w-2/5 truncate font-medium" dir="auto">{sender}</span>
+                <select className="flex-1 rounded-xl border border-stone-300 bg-white px-2 py-2 text-base" value={v}
+                  onChange={(e) => setSenderMap({ ...senderMap, [sender]: e.target.value })}>
+                  <option value="ME">{t("thisIsMe")}</option>
+                  {people.filter((p) => p.id !== me.id).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  <option value="new">{sender} ({t("newPersonOpt")})</option>
+                  <option value="IGNORE">{t("ignorePerson")}</option>
+                </select>
+              </div>
+            ))}
+          </div>
+        )}
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-stone-600">{t("pasteText")}</span>
           <textarea rows={4} value={pasted} onChange={(e) => setPasted(e.target.value)} className="w-full rounded-xl border border-stone-300 bg-white px-3 py-2 text-base" />

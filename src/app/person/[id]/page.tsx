@@ -7,7 +7,7 @@ import { BalanceLines } from "@/components/Balances";
 import { EntryList } from "@/components/EntryList";
 import { useData } from "@/lib/data";
 import { useI18n } from "@/lib/i18n";
-import { balancesBetween } from "@/lib/assets";
+import { balancesBetween, runningBalances } from "@/lib/assets";
 
 export default function PersonPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -32,7 +32,7 @@ function PersonBody({ id }: { id: string }) {
       </Card>
       <Link href={`/add?person=${id}`} className="block rounded-xl bg-emerald-700 py-3 text-center text-base font-semibold text-white">+ {t("newEntry")}</Link>
       <h2 className="pt-2 text-lg font-bold">{t("history")}</h2>
-      <EntryList list={list} />
+      <EntryList list={list} running={runningBalances(list, me.id, id)} />
     </div>
   );
 }

@@ -14,11 +14,15 @@ export type Entry = {
   family_id: string;
   from_person: string;
   to_person: string;
-  kind: "loan" | "repayment";
+  kind: "loan" | "repayment" | "conversion";
   asset_type: AssetType;
   asset_code: string;
   unit: string;
   amount: number;
+  to_asset_type: AssetType | null;
+  to_asset_code: string | null;
+  to_unit: string | null;
+  to_amount: number | null;
   note: string;
   entry_date: string;
   created_by: string | null;

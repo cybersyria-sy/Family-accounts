@@ -3,19 +3,20 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Shell } from "@/components/Shell";
 import { Button, Card, Chip, Input } from "@/components/ui";
+import { AssetPicker, AssetValue, normalizeAsset, parseAmount, unitSuffix } from "@/components/AssetPicker";
 import { useData } from "@/lib/data";
 import { useI18n, Key } from "@/lib/i18n";
-import { supabase, AssetType, Entry } from "@/lib/supabase";
-import { CURRENCIES, KARATS, assetLabel } from "@/lib/assets";
+import { supabase, Entry } from "@/lib/supabase";
+import { CURRENCIES, balancesBetween, formatAmount, fromKey } from "@/lib/assets";
 
-type Action = "borrowed" | "lent" | "iRepaid" | "theyRepaid";
+type Action = "borrowed" | "lent" | "iRepaid" | "theyRepaid" | "convert";
 const ACTIONS: { id: Action; label: Key }[] = [
   { id: "borrowed", label: "iBorrowed" },
   { id: "lent", label: "iLent" },
   { id: "iRepaid", label: "iRepaid" },
   { id: "theyRepaid", label: "theyRepaid" },
+  { id: "convert", label: "convertAction" },
 ];
-const TYPES: AssetType[] = ["currency", "gold", "silver", "share", "other"];
 
 export default function AddPage() {
   return <Shell><Suspense><EntryForm /></Suspense></Shell>;
@@ -32,16 +33,16 @@ function EntryForm() {
   const others = people.filter((p) => p.id !== me?.id);
   const [action, setAction] = useState<Action>("borrowed");
   const [person, setPerson] = useState<string>(params.get("person") ?? "");
-  const [type, setType] = useState<AssetType>("currency");
-  const [code, setCode] = useState("USD");
-  const [unit, setUnit] = useState("");
+  const [asset, setAsset] = useState<AssetValue>({ type: "currency", code: "USD", unit: "" });
+  const [toAsset, setToAsset] = useState<AssetValue>({ type: "currency", code: "EUR", unit: "" });
+  const [theyOweMe, setTheyOweMe] = useState(true); // for conversions
   const [amount, setAmount] = useState("");
+  const [toAmount, setToAmount] = useState("");
   const [note, setNote] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  // Recently used currencies first
   const currencyList = useMemo(() => {
     const used = entries.filter((e) => e.asset_type === "currency").map((e) => e.asset_code);
     return [...new Set([...used, ...CURRENCIES])];
@@ -53,11 +54,14 @@ function EntryForm() {
     if (mine) {
       const iGave = editing.from_person === me.id;
       setPerson(iGave ? editing.to_person : editing.from_person);
-      setAction(editing.kind === "loan" ? (iGave ? "lent" : "borrowed") : (iGave ? "iRepaid" : "theyRepaid"));
+      if (editing.kind === "conversion") { setAction("convert"); setTheyOweMe(iGave); }
+      else setAction(editing.kind === "loan" ? (iGave ? "lent" : "borrowed") : (iGave ? "iRepaid" : "theyRepaid"));
     }
-    setType(editing.asset_type);
-    setCode(editing.asset_code);
-    setUnit(editing.unit);
+    setAsset({ type: editing.asset_type, code: editing.asset_code, unit: editing.unit });
+    if (editing.kind === "conversion" && editing.to_asset_type) {
+      setToAsset({ type: editing.to_asset_type, code: editing.to_asset_code ?? "", unit: editing.to_unit ?? "" });
+      setToAmount(String(editing.to_amount ?? ""));
+    }
     setAmount(String(editing.amount));
     setNote(editing.note);
     setDate(editing.entry_date);
@@ -67,36 +71,41 @@ function EntryForm() {
     if (!person && others.length === 1) setPerson(others[0].id);
   }, [others, person]);
 
+  // For conversions: what this person currently owes / is owed, to pick from
+  const current = useMemo(() => (me && person ? balancesBetween(entries, me.id, person) : new Map<string, number>()), [entries, me, person]);
+
   if (!me || !family) return null;
   if (others.length === 0) {
     return <Card><p className="mb-3">{t("needPerson")}</p><Button onClick={() => router.push("/settings")}>{t("addPerson")}</Button></Card>;
   }
   const involvesMe = !editing || editing.from_person === me.id || editing.to_person === me.id;
-
-  const pickType = (ty: AssetType) => {
-    setType(ty);
-    setUnit("");
-    setCode(ty === "currency" ? currencyList[0] : ty === "gold" ? "21K" : "");
-  };
+  const isConvert = action === "convert";
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr("");
-    const amt = Number(amount.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace("٫", ".").replace(",", "."));
+    const amt = parseAmount(amount);
     if (!(amt > 0)) return setErr(t("amount"));
     if (!person && involvesMe) return setErr(t("withWhom"));
-    const iGave = action === "lent" || action === "iRepaid";
-    const row = {
-      family_id: family.id,
-      ...(involvesMe ? { from_person: iGave ? me.id : person, to_person: iGave ? person : me.id, kind: action === "borrowed" || action === "lent" ? "loan" : "repayment" } : {}),
-      asset_type: type,
-      asset_code: type === "share" ? code.trim().toUpperCase() : code.trim(),
-      unit: type === "gold" || type === "silver" ? "g" : type === "share" ? "shares" : type === "other" ? unit.trim() : "",
-      amount: amt,
-      note: note.trim(),
-      entry_date: date,
-    };
-    if ((type === "share" || type === "other") && !row.asset_code) return setErr(type === "share" ? t("ticker") : t("itemName"));
+    const a = normalizeAsset(asset);
+    if ((a.asset_type === "share" || a.asset_type === "other") && !a.asset_code) return setErr(a.asset_type === "share" ? t("ticker") : t("itemName"));
+
+    let people_: Record<string, string> = {};
+    if (involvesMe) {
+      const iGave = isConvert ? theyOweMe : action === "lent" || action === "iRepaid";
+      people_ = { from_person: iGave ? me.id : person, to_person: iGave ? person : me.id };
+    }
+    let conv: Record<string, unknown> = { to_asset_type: null, to_asset_code: null, to_unit: null, to_amount: null };
+    let kind: string = action === "borrowed" || action === "lent" ? "loan" : "repayment";
+    if (isConvert || editing?.kind === "conversion") {
+      const toAmt = parseAmount(toAmount);
+      if (!(toAmt > 0)) return setErr(t("convertTo"));
+      const b = normalizeAsset(toAsset);
+      if ((b.asset_type === "share" || b.asset_type === "other") && !b.asset_code) return setErr(t("convertTo"));
+      conv = { to_asset_type: b.asset_type, to_asset_code: b.asset_code, to_unit: b.unit, to_amount: toAmt };
+      kind = "conversion";
+    }
+    const row = { family_id: family.id, ...people_, kind, ...a, amount: amt, ...conv, note: note.trim(), entry_date: date };
     setBusy(true);
     const { error } = editing
       ? await supabase.from("entries").update(row).eq("id", editing.id)
@@ -105,6 +114,8 @@ function EntryForm() {
     await refresh();
     router.push(involvesMe ? `/person/${person}` : "/");
   };
+
+  const rate = isConvert && parseAmount(amount) > 0 && parseAmount(toAmount) > 0 ? parseAmount(toAmount) / parseAmount(amount) : 0;
 
   return (
     <form onSubmit={submit} className="space-y-5">
@@ -117,7 +128,7 @@ function EntryForm() {
             <div className="grid grid-cols-2 gap-2">
               {ACTIONS.map((a) => (
                 <button type="button" key={a.id} onClick={() => setAction(a.id)}
-                  className={`rounded-xl px-3 py-4 text-base font-semibold ring-1 ${action === a.id ? "bg-emerald-700 text-white ring-emerald-700" : "bg-white ring-stone-300"}`}>
+                  className={`rounded-xl px-3 py-4 text-base font-semibold ring-1 ${a.id === "convert" ? "col-span-2" : ""} ${action === a.id ? "bg-emerald-700 text-white ring-emerald-700" : "bg-white ring-stone-300"}`}>
                   {t(a.label)}
                 </button>
               ))}
@@ -132,34 +143,48 @@ function EntryForm() {
         </>
       )}
 
-      <section>
-        <p className="mb-2 font-semibold">{t("what")}</p>
-        <div className="mb-3 flex flex-wrap gap-2">
-          {TYPES.map((ty) => <Chip key={ty} active={type === ty} onClick={() => pickType(ty)}>{t(ty)}</Chip>)}
-        </div>
-        {type === "currency" && (
-          <select value={code} onChange={(e) => setCode(e.target.value)}
-            className="w-full rounded-xl border border-stone-300 bg-white px-3 py-3 text-base">
-            {currencyList.map((c) => <option key={c} value={c}>{lang === "ar" ? `${assetLabel({ type: "currency", code: c, unit: "" }, "ar")} (${c})` : c}</option>)}
-          </select>
-        )}
-        {type === "gold" && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-stone-600">{t("karat")}:</span>
-            {KARATS.map((k) => <Chip key={k} active={code === k} onClick={() => setCode(k)}>{k.replace("K", "")}</Chip>)}
+      {isConvert && (
+        <section className="space-y-2">
+          <p className="text-stone-600">{t("convertHelp")}</p>
+          <div className="flex gap-2">
+            <Chip active={theyOweMe} onClick={() => setTheyOweMe(true)}>{t("theyOweMe")}</Chip>
+            <Chip active={!theyOweMe} onClick={() => setTheyOweMe(false)}>{t("iOweThem")}</Chip>
           </div>
-        )}
-        {type === "share" && <Input label={t("ticker")} dir="ltr" value={code} onChange={(e) => setCode(e.target.value)} />}
-        {type === "other" && (
-          <div className="grid grid-cols-3 gap-2">
-            <div className="col-span-2"><Input label={t("itemName")} value={code} onChange={(e) => setCode(e.target.value)} /></div>
-            <Input label={t("unitLabel")} value={unit} onChange={(e) => setUnit(e.target.value)} />
-          </div>
-        )}
-      </section>
+          {current.size > 0 && (
+            <div className="flex flex-wrap gap-2 text-sm">
+              {[...current].map(([k, v]) => {
+                const av = fromKey(k);
+                return (
+                  <button type="button" key={k} className="rounded-full bg-stone-100 px-3 py-1"
+                    onClick={() => { setAsset({ type: av.type, code: av.code, unit: av.unit }); setAmount(String(Math.abs(v))); setTheyOweMe(v > 0); }}>
+                    <bdi>{formatAmount(Math.abs(v), av, lang)}</bdi>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
-      <Input label={`${t("amount")}${type === "gold" || type === "silver" ? ` (${t("grams")})` : type === "share" ? ` (${t("sharesUnit")})` : ""}`}
+      <section>
+        <p className="mb-2 font-semibold">{isConvert ? t("convertFrom") : t("what")}</p>
+        <AssetPicker value={asset} onChange={setAsset} currencyList={currencyList} />
+      </section>
+      <Input label={`${t("amount")}${unitSuffix(asset.type, t)}`}
         inputMode="decimal" required dir="ltr" className="text-2xl font-bold" value={amount} onChange={(e) => setAmount(e.target.value)} />
+
+      {(isConvert || editing?.kind === "conversion") && (
+        <>
+          <section>
+            <p className="mb-2 font-semibold">{t("convertTo")}</p>
+            <AssetPicker value={toAsset} onChange={setToAsset} currencyList={currencyList} />
+          </section>
+          <Input label={`${t("amount")}${unitSuffix(toAsset.type, t)}`}
+            inputMode="decimal" required dir="ltr" className="text-2xl font-bold" value={toAmount} onChange={(e) => setToAmount(e.target.value)} />
+          {rate > 0 && <p className="text-sm text-stone-500" dir="ltr">1 {asset.code || asset.type} = {Number(rate.toPrecision(6))} {toAsset.code || toAsset.type}</p>}
+        </>
+      )}
+
       <Input label={t("note")} value={note} onChange={(e) => setNote(e.target.value)} />
       <Input label={t("date")} type="date" required value={date} onChange={(e) => setDate(e.target.value)} />
 

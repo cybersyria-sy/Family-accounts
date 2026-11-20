@@ -77,11 +77,11 @@ export function runningBalances(entries: Entry[], me: string, other: string): Ma
   const out = new Map<string, Map<string, number>>();
   for (const e of sorted) {
     const eff = entryEffect(e, me, other);
+    for (const [k, v] of eff) bal.set(k, round((bal.get(k) ?? 0) + v));
+    // Full picture after this entry: the assets it touched first, then every other open balance
     const after = new Map<string, number>();
-    for (const [k, v] of eff) {
-      bal.set(k, round((bal.get(k) ?? 0) + v));
-      after.set(k, bal.get(k)!);
-    }
+    for (const k of eff.keys()) after.set(k, bal.get(k)!);
+    for (const [k, v] of bal) if (!after.has(k) && v !== 0) after.set(k, v);
     out.set(e.id, after);
   }
   return out;

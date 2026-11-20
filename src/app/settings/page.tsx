@@ -1,0 +1,113 @@
+"use client";
+import { useState } from "react";
+import { Shell } from "@/components/Shell";
+import { Avatar, Button, Card, Chip, Input } from "@/components/ui";
+import { EntryList } from "@/components/EntryList";
+import { useData } from "@/lib/data";
+import { useI18n } from "@/lib/i18n";
+import { supabase } from "@/lib/supabase";
+
+export default function SettingsPage() {
+  return <Shell><SettingsBody /></Shell>;
+}
+
+function SettingsBody() {
+  const { t, lang, setLang } = useI18n();
+  const { family, families, people, me, entries, refresh, selectFamily } = useData();
+  const [newName, setNewName] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  if (!family || !me) return null;
+
+  const link = typeof window !== "undefined" ? `${window.location.origin}/join/${family.invite_code}` : "";
+
+  const addPerson = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErr("");
+    const { error } = await supabase.from("people").insert({ family_id: family.id, name: newName.trim() });
+    if (error) return setErr(error.message);
+    setNewName("");
+    await refresh();
+  };
+
+  const removePerson = async (id: string) => {
+    const p = people.find((x) => x.id === id);
+    if (!p || p.user_id || entries.some((e) => e.from_person === id || e.to_person === id)) return setErr(t("cantRemove"));
+    await supabase.from("people").delete().eq("id", id);
+    await refresh();
+  };
+
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {}
+  };
+  const share = async () => {
+    try { await navigator.share({ title: family.name, url: link }); } catch { copy(); }
+  };
+  const newCode = async () => {
+    await supabase.rpc("reset_invite_code", { p_family: family.id });
+    await refresh();
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card className="space-y-3">
+        <h2 className="text-lg font-bold">{t("people")}</h2>
+        <ul className="divide-y divide-stone-100">
+          {people.map((p) => (
+            <li key={p.id} className="flex items-center gap-3 py-2">
+              <Avatar name={p.name} />
+              <div className="flex-1">
+                <p className="font-semibold">{p.name}{p.id === me.id && ` (${t("you")})`}</p>
+                <p className="text-sm text-stone-500">{p.user_id ? t("hasAccount") : t("noAccount")}</p>
+              </div>
+              {!p.user_id && <button onClick={() => removePerson(p.id)} className="text-sm text-red-700">{t("removePerson")}</button>}
+            </li>
+          ))}
+        </ul>
+        <form onSubmit={addPerson} className="flex items-end gap-2">
+          <div className="flex-1"><Input label={t("name")} required value={newName} onChange={(e) => setNewName(e.target.value)} /></div>
+          <Button>{t("addPerson")}</Button>
+        </form>
+        {err && <p className="text-red-700">{err}</p>}
+      </Card>
+
+      <Card className="space-y-3">
+        <h2 className="text-lg font-bold">{t("inviteLink")}</h2>
+        <p className="text-stone-600">{t("inviteHelp")}</p>
+        <p className="break-all rounded-lg bg-stone-100 p-2 text-sm" dir="ltr">{link}</p>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={share}>{t("share_")}</Button>
+          <Button variant="ghost" onClick={copy}>{copied ? t("copied") : t("copy")}</Button>
+          <Button variant="ghost" onClick={newCode}>{t("newCode")}</Button>
+        </div>
+      </Card>
+
+      <Card className="space-y-3">
+        <h2 className="text-lg font-bold">{t("language")}</h2>
+        <div className="flex gap-2">
+          <Chip active={lang === "ar"} onClick={() => setLang("ar")}>العربية</Chip>
+          <Chip active={lang === "en"} onClick={() => setLang("en")}>English</Chip>
+        </div>
+      </Card>
+
+      {families.length > 1 && (
+        <Card className="space-y-3">
+          <h2 className="text-lg font-bold">{t("switchFamily")}</h2>
+          <div className="flex flex-wrap gap-2">
+            {families.map((f) => <Chip key={f.id} active={f.id === family.id} onClick={() => selectFamily(f.id)}>{f.name}</Chip>)}
+          </div>
+        </Card>
+      )}
+
+      <Card className="space-y-3">
+        <button className="flex w-full items-center justify-between text-lg font-bold" onClick={() => setShowAll(!showAll)}>
+          {t("allEntries")} <span>{showAll ? "−" : "+"}</span>
+        </button>
+        {showAll && <EntryList list={entries} />}
+      </Card>
+
+      <Button variant="danger" className="w-full" onClick={() => supabase.auth.signOut()}>{t("signOut")}</Button>
+    </div>
+  );
+}

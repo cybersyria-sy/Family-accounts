@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { ExtractResult } from "@/lib/extractSchema";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 type Img = { media_type: "image/jpeg" | "image/png" | "image/webp"; data: string };
 type SenderMap = { sender: string; as: string };

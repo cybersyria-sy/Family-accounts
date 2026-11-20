@@ -30,9 +30,9 @@ type Draft = {
 };
 
 /** Shrink a photo so uploads stay small and fast. */
-async function toJpeg(file: Blob): Promise<Img> {
+async function toJpeg(file: Blob, max = 1600): Promise<Img> {
   const bmp = await createImageBitmap(file);
-  const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
   const c = document.createElement("canvas");
   c.width = Math.round(bmp.width * scale);
   c.height = Math.round(bmp.height * scale);
@@ -55,13 +55,31 @@ async function readChatFile(file: File): Promise<{ text: string; images: Blob[] 
   return { text: await file.text(), images: [] };
 }
 
-/** Sender names in a WhatsApp export (iPhone "[date, time] Name: msg" and Android "date, time - Name: msg"). */
-function chatSenders(text: string): string[] {
+/** Sender names in a WhatsApp export (iPhone "[date, time] Name: msg" and Android "date, time - Name: msg").
+ *  Skips WhatsApp's own system lines (encryption notice etc., which iPhone writes under the chat's name). */
+/** Cut a long text into parts at line breaks. */
+function splitText(text: string, size: number): string[] {
+  if (!text.trim()) return [];
+  const parts: string[] = [];
+  let cur = "";
+  for (const line of text.split("\n")) {
+    if (cur.length + line.length > size && cur) { parts.push(cur); cur = ""; }
+    cur += line + "\n";
+  }
+  if (cur.trim()) parts.push(cur);
+  return parts;
+}
+
+function chatSenders(text: string, chatTitle: string): string[] {
   const counts = new Map<string, number>();
-  const re = /^\u200e?(?:\[[^\]]+\]\s*|\d{1,4}[\/.\-]\d{1,2}[\/.\-]\d{1,4},?\s[^-]{3,15}\s-\s)([^:\n]{1,60}):\s/gm;
+  const re = /^\u200e?(?:\[[^\]]+\]\s*|\d{1,4}[\/.\-]\d{1,2}[\/.\-]\d{1,4},?\s[^-]{3,15}\s-\s)([^:\n]{1,60}):\s(.*)$/gm;
+  const title = chatTitle.trim().toLowerCase();
   for (const m of text.matchAll(re)) {
     const n = m[1].replace(/[\u200e\u202a-\u202e]/g, "").trim();
-    if (n) counts.set(n, (counts.get(n) ?? 0) + 1);
+    if (!n || n.toLowerCase() === title) continue;
+    const msg = m[2];
+    if (msg.startsWith("\u200e") && /end-to-end|encrypted|مشفرة|التشفير|created group|أنشأ/i.test(msg)) continue;
+    counts.set(n, (counts.get(n) ?? 0) + 1);
   }
   return [...counts].filter(([, c]) => c >= 1).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([n]) => n);
 }
@@ -87,6 +105,7 @@ function ImportBody() {
   const [err, setErr] = useState("");
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [progress, setProgress] = useState("");
 
   if (!me || !family) return null;
 
@@ -104,31 +123,58 @@ function ImportBody() {
     return hit ? hit.id : `new:${n}`;
   };
 
+  // Long chats and many photos are read in small parts at the same time, so no single read runs too long
   const read = async () => {
-    setBusy(true); setErr("");
+    setBusy(true); setErr(""); setProgress("");
     try {
-      const res = await fetch("/api/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({
-          images: [...images, ...chatImages].slice(0, 8).map(({ media_type, data }) => ({ media_type, data })),
-          senders: Object.entries(senderMap).map(([sender, v]) => ({
-            sender,
-            as: v === "ME" || v === "IGNORE" ? v : v === "new" ? sender : people.find((p) => p.id === v)?.name ?? sender,
-          })),
-          text: [chatText, pasted].filter(Boolean).join("\n\n"),
-          myName: me.name,
-          people: people.filter((p) => p.id !== me.id).map((p) => p.name),
-          lang,
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setErr(json.error === "not_configured" ? t("aiNotConfigured") : `${t("error")} (${json.error ?? res.status})`);
-        return;
-      }
-      const result = json as ExtractResultT;
-      setWarnings(result.warnings ?? []);
+      const shared = {
+        senders: Object.entries(senderMap).map(([sender, v]) => ({
+          sender,
+          as: v === "ME" || v === "IGNORE" ? v : v === "new" ? sender : people.find((p) => p.id === v)?.name ?? sender,
+        })),
+        myName: me.name,
+        people: people.filter((p) => p.id !== me.id).map((p) => p.name),
+        lang,
+      };
+      const jobs: { images?: { media_type: string; data: string }[]; text?: string }[] = [];
+      const allImgs = [...images, ...chatImages].map(({ media_type, data }) => ({ media_type, data }));
+      for (let i = 0; i < allImgs.length; i += 2) jobs.push({ images: allImgs.slice(i, i + 2) });
+      for (const part of splitText([chatText, pasted].filter(Boolean).join("\n\n"), 12000)) jobs.push({ text: part });
+
+      const results: ExtractResultT[] = [];
+      const failed: string[] = [];
+      let done = 0, next = 0;
+      setProgress(`0 / ${jobs.length}`);
+      const worker = async () => {
+        while (next < jobs.length) {
+          const job = jobs[next++];
+          try {
+            const res = await fetch("/api/extract", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
+              body: JSON.stringify({ ...shared, ...job }),
+            });
+            const json = await res.json().catch(() => ({}));
+            if (res.ok) results.push(json as ExtractResultT);
+            else failed.push(json.error === "not_configured" ? "not_configured" : res.status === 504 ? "timeout" : String(json.error ?? res.status));
+          } catch (e) {
+            failed.push(e instanceof Error ? e.message : "network");
+          }
+          done++; setProgress(`${done} / ${jobs.length}`);
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+
+      if (failed.includes("not_configured")) { setErr(t("aiNotConfigured")); return; }
+      if (!results.length) { setErr(`${t("error")} (${[...new Set(failed)].join(", ")})`); return; }
+      const result: ExtractResultT = {
+        entries: results.flatMap((r) => r.entries).sort((a, b) => a.date.localeCompare(b.date)),
+        warnings: [
+          ...(failed.length ? [`${t("partsFailed")}: ${failed.length} / ${jobs.length} (${[...new Set(failed)].join(", ")})`] : []),
+          ...results.flatMap((r) => r.warnings ?? []),
+        ],
+      };
+      setWarnings(result.warnings);
       setDrafts(result.entries.map((e) => ({
         include: e.confidence !== "low",
         from: resolveName(e.from_name),
@@ -146,10 +192,10 @@ function ImportBody() {
         note: e.note,
         low: e.confidence === "low",
       })));
-    } catch {
-      setErr(t("error"));
+    } catch (e) {
+      setErr(`${t("error")} (${e instanceof Error ? e.message : "?"})`);
     } finally {
-      setBusy(false);
+      setBusy(false); setProgress("");
     }
   };
 
@@ -308,12 +354,20 @@ function ImportBody() {
           const { text, images: blobs } = await readChatFile(f);
           setChatName(f.name); setChatText(text);
           const imgs: Img[] = [];
-          for (const b of blobs) { try { imgs.push(await toJpeg(b)); } catch {} }
+          for (const b of blobs) { try { imgs.push(await toJpeg(b, 1280)); } catch {} }
           setChatImages(imgs);
           const map: Record<string, string> = {};
-          for (const n of chatSenders(text)) {
-            const hit = people.find((p) => p.name.trim().toLowerCase() === n.toLowerCase());
+          const title = f.name.replace(/\.(zip|txt)$/i, "").replace(/^WhatsApp Chat( with)?\s*-?\s*/i, "").replace(/^محادثة واتساب( مع)?\s*-?\s*/, "");
+          const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+          for (const n of chatSenders(text, title)) {
+            const hit = people.find((p) => same(p.name, n));
             map[n] = hit ? (hit.id === me.id ? "ME" : hit.id) : "new";
+          }
+          // In a two-person chat with one known family member, the other sender is the uploader
+          const names = Object.keys(map);
+          if (!Object.values(map).includes("ME") && names.length === 2) {
+            const unknown = names.filter((n) => map[n] === "new");
+            if (unknown.length === 1) map[unknown[0]] = "ME";
           }
           setSenderMap(map);
         }} />
@@ -343,7 +397,7 @@ function ImportBody() {
       </Card>
 
       {err && <p className="text-red-700">{err}</p>}
-      <Button className="w-full" disabled={busy || !hasInput} onClick={read}>{busy ? t("reading") : `✨ ${t("readWithAi")}`}</Button>
+      <Button className="w-full" disabled={busy || !hasInput} onClick={read}>{busy ? `${t("reading")} ${progress}` : `✨ ${t("readWithAi")}`}</Button>
     </div>
   );
 }

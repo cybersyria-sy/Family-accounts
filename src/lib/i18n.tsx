@@ -82,6 +82,7 @@ const dict = {
   noAccount: { en: "no account yet", ar: "بلا حساب بعد" },
   you: { en: "You", ar: "أنت" },
   error: { en: "Something went wrong", ar: "حدث خطأ" },
+  partsFailed: { en: "Some parts could not be read", ar: "تعذّرت قراءة بعض الأجزاء" },
   needPerson: { en: "Add a person first", ar: "أضف شخصاً أولاً" },
   allEntries: { en: "All entries", ar: "كل القيود" },
   switchFamily: { en: "Switch family", ar: "تبديل العائلة" },

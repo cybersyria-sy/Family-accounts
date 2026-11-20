@@ -25,13 +25,17 @@ export default function AddPage() {
 
 function EntryForm() {
   const { t, lang } = useI18n();
-  const { people, me, entries, family, refresh } = useData();
+  const { people, me: realMe, entries, family, refresh, editableOwners } = useData();
   const offerUndo = useUndo();
   const router = useRouter();
   const params = useSearchParams();
   const editId = params.get("edit");
   const editing: Entry | undefined = useMemo(() => entries.find((e) => e.id === editId), [entries, editId]);
 
+  // Who this transaction is for: me, or someone who let me add/edit their transactions
+  const actorOptions = realMe ? [realMe, ...people.filter((p) => p.user_id && p.id !== realMe.id && editableOwners.includes(p.user_id))] : [];
+  const [actorId, setActorId] = useState("");
+  const me = actorOptions.find((p) => p.id === actorId) ?? realMe;
   const others = people.filter((p) => p.id !== me?.id);
   const [action, setAction] = useState<Action>("borrowed");
   const [person, setPerson] = useState<string>(params.get("person") ?? "");
@@ -52,6 +56,10 @@ function EntryForm() {
 
   useEffect(() => {
     if (!editing || !me) return;
+    if (editing.from_person !== me.id && editing.to_person !== me.id) {
+      const owner = actorOptions.find((p) => p.id === editing.from_person || p.id === editing.to_person);
+      if (owner && owner.id !== me.id) { setActorId(owner.id); return; }
+    }
     const mine = editing.from_person === me.id || editing.to_person === me.id;
     if (mine) {
       const iGave = editing.from_person === me.id;
@@ -67,6 +75,7 @@ function EntryForm() {
     setAmount(String(editing.amount));
     setNote(editing.note);
     setDate(editing.entry_date);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, me]);
 
   useEffect(() => {
@@ -121,7 +130,7 @@ function EntryForm() {
       const newId = res.data.id;
       offerUndo("saved", async () => check(await supabase.from("entries").delete().eq("id", newId)));
     }
-    router.push(involvesMe ? `/person/${person}` : "/");
+    router.push(me.id !== realMe!.id ? `/view/${me.id}` : involvesMe ? `/person/${person}` : "/");
   };
 
   const rate = isConvert && parseAmount(amount) > 0 && parseAmount(toAmount) > 0 ? parseAmount(toAmount) / parseAmount(amount) : 0;
@@ -129,6 +138,18 @@ function EntryForm() {
   return (
     <form onSubmit={submit} className="space-y-5">
       <h2 className="text-xl font-bold">{editing ? t("editEntry") : t("newEntry")}</h2>
+      {actorOptions.length > 1 && !editing && (
+        <section>
+          <p className="mb-2 font-semibold">{t("recordFor")}</p>
+          <div className="flex flex-wrap gap-2">
+            {actorOptions.map((p) => (
+              <Chip key={p.id} active={me.id === p.id} onClick={() => { setActorId(p.id); setPerson(""); }}>
+                {p.id === realMe!.id ? t("you") : p.name}
+              </Chip>
+            ))}
+          </div>
+        </section>
+      )}
 
       {involvesMe && (
         <>

@@ -13,7 +13,9 @@ type Data = {
   entries: Entry[];
   /** user ids I share my transactions with */
   myViewers: string[];
-  /** of those, who may also edit */
+  /** user ids who let me add/edit their transactions */
+  editableOwners: string[];
+  /** of those I share with, who may also edit */
   myEditors: string[];
   /** user ids who share their transactions with me */
   sharedWithMe: string[];
@@ -94,7 +96,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [e.created_by, userOf(e.from_person), userOf(e.to_person)].some((u) => !!u && editableOwners.includes(u));
 
   return (
-    <DataCtx.Provider value={{ session, ready: authReady && loaded, families, family, people, me, entries, myViewers, myEditors, sharedWithMe, canEdit, selectFamily, refresh }}>
+    <DataCtx.Provider value={{ session, ready: authReady && loaded, families, family, people, me, entries, myViewers, myEditors, editableOwners, sharedWithMe, canEdit, selectFamily, refresh }}>
       {children}
     </DataCtx.Provider>
   );

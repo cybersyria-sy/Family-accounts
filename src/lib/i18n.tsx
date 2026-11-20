@@ -112,6 +112,7 @@ const dict = {
   allowEdit: { en: "Also allow adding and editing", ar: "السماح أيضاً بالإضافة والتعديل" },
   editOn: { en: "Editing allowed", ar: "تم السماح بالتعديل" },
   editOff: { en: "View only now", ar: "أصبح للعرض فقط" },
+  recordFor: { en: "Whose transaction?", ar: "معاملة من؟" },
   partsFailed: { en: "Some parts could not be read", ar: "تعذّرت قراءة بعض الأجزاء" },
   needPerson: { en: "Add a person first", ar: "أضف شخصاً أولاً" },
   allEntries: { en: "All entries", ar: "كل القيود" },

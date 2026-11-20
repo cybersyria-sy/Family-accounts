@@ -22,3 +22,6 @@ npm run dev
 ## Deploy
 Hosted on Vercel (project `family-accounts`). Every push to `main` deploys automatically.
 After the first deploy, set Supabase → Authentication → URL Configuration → Site URL to the Vercel address.
+
+## AI import
+`/import` reads ledger photos, screenshots and WhatsApp chats with Claude (`/api/extract`) and asks the user to confirm each entry. Needs `ANTHROPIC_API_KEY` in Vercel.

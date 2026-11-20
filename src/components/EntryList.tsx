@@ -5,16 +5,20 @@ import { useI18n } from "@/lib/i18n";
 import { supabase, Entry } from "@/lib/supabase";
 import { formatAmount, fromKey } from "@/lib/assets";
 import { Card } from "./ui";
+import { useUndo, check } from "@/lib/undo";
 
 export function EntryList({ list, running }: { list: Entry[]; running?: Map<string, Map<string, number>> }) {
   const { t, lang } = useI18n();
-  const { people, me, refresh } = useData();
+  const { people, me, refresh, entries } = useData();
+  const offerUndo = useUndo();
   const name = (id: string) => (id === me?.id ? t("you") : people.find((p) => p.id === id)?.name ?? "?");
 
   const remove = async (id: string) => {
     if (!window.confirm(t("confirmDelete"))) return;
-    await supabase.from("entries").delete().eq("id", id);
+    const old = entries.find((x) => x.id === id);
+    const { error } = await supabase.from("entries").delete().eq("id", id);
     await refresh();
+    if (!error && old) offerUndo("deleted", async () => check(await supabase.from("entries").insert(old)));
   };
 
   if (list.length === 0) return <p className="text-stone-500">{t("nothing")}</p>;

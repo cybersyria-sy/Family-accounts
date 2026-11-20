@@ -4,6 +4,7 @@ import { Shell } from "@/components/Shell";
 import { Avatar, Button, Card, Chip, Input } from "@/components/ui";
 import { EntryList } from "@/components/EntryList";
 import { useData } from "@/lib/data";
+import { useUndo, check } from "@/lib/undo";
 import { useI18n } from "@/lib/i18n";
 import { supabase } from "@/lib/supabase";
 
@@ -14,6 +15,7 @@ export default function SettingsPage() {
 function SettingsBody() {
   const { t, lang, setLang } = useI18n();
   const { family, families, people, me, entries, refresh, selectFamily } = useData();
+  const offerUndo = useUndo();
   const [newName, setNewName] = useState("");
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState("");
@@ -25,17 +27,19 @@ function SettingsBody() {
   const addPerson = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr("");
-    const { error } = await supabase.from("people").insert({ family_id: family.id, name: newName.trim() });
+    const { data, error } = await supabase.from("people").insert({ family_id: family.id, name: newName.trim() }).select("id").single();
     if (error) return setErr(error.message);
     setNewName("");
     await refresh();
+    offerUndo("personAdded", async () => check(await supabase.from("people").delete().eq("id", data.id)));
   };
 
   const removePerson = async (id: string) => {
     const p = people.find((x) => x.id === id);
     if (!p || p.user_id || entries.some((e) => e.from_person === id || e.to_person === id)) return setErr(t("cantRemove"));
-    await supabase.from("people").delete().eq("id", id);
+    const { error } = await supabase.from("people").delete().eq("id", id);
     await refresh();
+    if (!error) offerUndo("personRemoved", async () => check(await supabase.from("people").insert({ id: p.id, family_id: p.family_id, name: p.name })));
   };
 
   const copy = async () => {
@@ -45,8 +49,10 @@ function SettingsBody() {
     try { await navigator.share({ title: family.name, url: link }); } catch { copy(); }
   };
   const newCode = async () => {
-    await supabase.rpc("reset_invite_code", { p_family: family.id });
+    const oldCode = family.invite_code;
+    const { error } = await supabase.rpc("reset_invite_code", { p_family: family.id });
     await refresh();
+    if (!error) offerUndo("newLinkMade", async () => check(await supabase.from("families").update({ invite_code: oldCode }).eq("id", family.id)));
   };
 
   return (

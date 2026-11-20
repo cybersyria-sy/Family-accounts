@@ -5,6 +5,7 @@ import JSZip from "jszip";
 import { Shell } from "@/components/Shell";
 import { Button, Card } from "@/components/ui";
 import { useData } from "@/lib/data";
+import { useUndo, check } from "@/lib/undo";
 import { useI18n, Key } from "@/lib/i18n";
 import { supabase, AssetType } from "@/lib/supabase";
 import { CURRENCIES, KARATS } from "@/lib/assets";
@@ -105,6 +106,7 @@ export default function ImportPage() {
 function ImportBody() {
   const { t, lang } = useI18n();
   const { people, me, family, session, refresh } = useData();
+  const offerUndo = useUndo();
   const router = useRouter();
   const camRef = useRef<HTMLInputElement>(null);
   const picRef = useRef<HTMLInputElement>(null);
@@ -245,11 +247,18 @@ function ImportBody() {
       note: d.note.trim(),
       entry_date: d.date,
     }));
+    let newEntryIds: string[] = [];
     if (rows.length) {
-      const { error } = await supabase.from("entries").insert(rows);
+      const { data, error } = await supabase.from("entries").insert(rows).select("id");
       if (error) { setBusy(false); return setErr(error.message); }
+      newEntryIds = (data ?? []).map((r) => r.id);
     }
     await refresh();
+    const newPeople = [...ids.values()];
+    offerUndo("imported", async () => {
+      if (newEntryIds.length) check(await supabase.from("entries").delete().in("id", newEntryIds));
+      if (newPeople.length) check(await supabase.from("people").delete().in("id", newPeople));
+    });
     setBusy(false);
     router.push("/");
   };

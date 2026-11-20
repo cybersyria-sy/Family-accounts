@@ -5,6 +5,7 @@ import { Shell } from "@/components/Shell";
 import { Button, Card, Chip, Input } from "@/components/ui";
 import { AssetPicker, AssetValue, normalizeAsset, parseAmount, unitSuffix } from "@/components/AssetPicker";
 import { useData } from "@/lib/data";
+import { useUndo, check } from "@/lib/undo";
 import { useI18n, Key } from "@/lib/i18n";
 import { supabase, Entry } from "@/lib/supabase";
 import { CURRENCIES, balancesBetween, formatAmount, fromKey } from "@/lib/assets";
@@ -25,6 +26,7 @@ export default function AddPage() {
 function EntryForm() {
   const { t, lang } = useI18n();
   const { people, me, entries, family, refresh } = useData();
+  const offerUndo = useUndo();
   const router = useRouter();
   const params = useSearchParams();
   const editId = params.get("edit");
@@ -107,11 +109,18 @@ function EntryForm() {
     }
     const row = { family_id: family.id, ...people_, kind, ...a, amount: amt, ...conv, note: note.trim(), entry_date: date };
     setBusy(true);
-    const { error } = editing
-      ? await supabase.from("entries").update(row).eq("id", editing.id)
-      : await supabase.from("entries").insert(row);
-    if (error) { setBusy(false); return setErr(error.message); }
+    const res = editing
+      ? await supabase.from("entries").update(row).eq("id", editing.id).select("id").single()
+      : await supabase.from("entries").insert(row).select("id").single();
+    if (res.error) { setBusy(false); return setErr(res.error.message); }
     await refresh();
+    if (editing) {
+      const before = { ...editing };
+      offerUndo("changesSaved", async () => check(await supabase.from("entries").update(before).eq("id", before.id)));
+    } else {
+      const newId = res.data.id;
+      offerUndo("saved", async () => check(await supabase.from("entries").delete().eq("id", newId)));
+    }
     router.push(involvesMe ? `/person/${person}` : "/");
   };
 

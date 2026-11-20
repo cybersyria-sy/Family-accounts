@@ -18,3 +18,7 @@ npm install
 cp .env.example .env.local   # fill in the values
 npm run dev
 ```
+
+## Deploy
+Hosted on Vercel (project `family-accounts`). Every push to `main` deploys automatically.
+After the first deploy, set Supabase → Authentication → URL Configuration → Site URL to the Vercel address.

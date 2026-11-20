@@ -73,7 +73,8 @@ export async function POST(req: Request) {
     if (msg.stop_reason === "refusal" || !msg.parsed_output) {
       return Response.json({ error: "could_not_read" }, { status: 422 });
     }
-    return Response.json(msg.parsed_output);
+    // Nothing from the upload is stored or logged; the result goes straight back to the user
+    return Response.json(msg.parsed_output, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     if (e instanceof Anthropic.RateLimitError) return Response.json({ error: "busy" }, { status: 429 });
     if (e instanceof Anthropic.APIError) {

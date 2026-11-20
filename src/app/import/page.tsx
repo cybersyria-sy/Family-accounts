@@ -276,6 +276,7 @@ function ImportBody() {
     <div className="space-y-4">
       <h2 className="text-xl font-bold">{t("importTitle")}</h2>
       <p className="text-stone-600">{t("importHelp")}</p>
+      <p className="rounded-lg bg-emerald-50 p-2 text-sm text-emerald-900">🔒 {t("privacyNote")}</p>
 
       <Card className="space-y-3">
         <div className="grid grid-cols-2 gap-2">

@@ -104,6 +104,7 @@ const dict = {
   ignorePerson: { en: "Not a family member", ar: "ليس من العائلة" },
   chatPhotos: { en: "photos found in the chat", ar: "صور في المحادثة" },
   sourceText: { en: "From", ar: "من النص" },
+  privacyNote: { en: "Photos and chats are only read, never saved. Only the entries you confirm are kept.", ar: "الصور والمحادثات تُقرأ فقط ولا تُحفظ أبداً. نحتفظ فقط بالقيود التي تؤكدها." },
   importNav: { en: "Import", ar: "استيراد" },
   importTitle: { en: "Import old records", ar: "استيراد سجلات قديمة" },
   importHelp: { en: "Take a photo of a ledger page, upload screenshots, or add a WhatsApp chat. AI reads it and you confirm every entry before saving.", ar: "صوّر صفحة من الدفتر أو ارفع لقطات شاشة أو محادثة واتساب. يقرأها الذكاء الاصطناعي وتؤكد كل قيد قبل الحفظ." },

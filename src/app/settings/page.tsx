@@ -14,7 +14,7 @@ export default function SettingsPage() {
 
 function SettingsBody() {
   const { t, lang, setLang } = useI18n();
-  const { family, families, people, me, entries, refresh, selectFamily, myViewers } = useData();
+  const { family, families, people, me, entries, refresh, selectFamily, myViewers, myEditors } = useData();
   const offerUndo = useUndo();
   const [newName, setNewName] = useState("");
   const [copied, setCopied] = useState(false);
@@ -50,6 +50,15 @@ function SettingsBody() {
     if (error) return setErr(error.message);
     await refresh();
     offerUndo(on ? "sharingOn" : "sharingOff", async () => check(await (on ? del() : add())));
+  };
+
+  const setEditing = async (viewer: string, on: boolean) => {
+    setErr("");
+    const upd = (v: boolean) => supabase.from("shares").update({ can_edit: v }).eq("family_id", family.id).eq("owner_user", me.user_id!).eq("viewer_user", viewer);
+    const { error } = await upd(on);
+    if (error) return setErr(error.message);
+    await refresh();
+    offerUndo(on ? "editOn" : "editOff", async () => check(await upd(!on)));
   };
 
   const copy = async () => {
@@ -102,7 +111,13 @@ function SettingsBody() {
                   <Avatar name={p.name} />
                   <div className="flex-1">
                     <p className="font-semibold">{p.name}</p>
-                    <p className={`text-sm ${on ? "text-emerald-700" : "text-stone-500"}`}>{on ? t("canSeeAll") : t("cannotSee")}</p>
+                    <p className={`text-sm ${on ? "text-emerald-700" : "text-stone-500"}`}>{on ? (myEditors.includes(p.user_id!) ? t("canEditAll") : t("canSeeAll")) : t("cannotSee")}</p>
+                    {on && (
+                      <label className="mt-1 flex items-center gap-2 text-sm">
+                        <input type="checkbox" className="h-4 w-4" checked={myEditors.includes(p.user_id!)} onChange={(e) => setEditing(p.user_id!, e.target.checked)} />
+                        {t("allowEdit")}
+                      </label>
+                    )}
                   </div>
                   <Button variant={on ? "ghost" : "primary"} onClick={() => setSharing(p.user_id!, !on)}>{on ? t("stopSharing") : t("shareWith")}</Button>
                 </li>

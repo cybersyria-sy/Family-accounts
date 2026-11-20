@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { use } from "react";
 import { Shell } from "@/components/Shell";
 import { Avatar, Card } from "@/components/ui";
@@ -16,7 +17,7 @@ export default function ViewPage({ params }: { params: Promise<{ id: string }> }
 
 function ViewBody({ id }: { id: string }) {
   const { t } = useI18n();
-  const { people, entries, sharedWithMe } = useData();
+  const { people, entries, sharedWithMe, canEdit } = useData();
   const owner = people.find((x) => x.id === id);
   if (!owner || !owner.user_id || !sharedWithMe.includes(owner.user_id)) return <p className="text-stone-500">{t("nothing")}</p>;
   const list = entries.filter((e) => e.from_person === id || e.to_person === id);
@@ -29,7 +30,7 @@ function ViewBody({ id }: { id: string }) {
         <Avatar name={owner.name} />
         <div className="flex-1">
           <p className="text-xl font-bold">{owner.name}</p>
-          <p className="text-sm text-stone-500">👁 {t("viewOnly")}</p>
+          <p className="text-sm text-stone-500">👁 {t("sharedWithYou")}</p>
         </div>
       </Card>
       {counterparts.map((p) => (
@@ -41,6 +42,9 @@ function ViewBody({ id }: { id: string }) {
           </div>
         </Card>
       ))}
+      {list.some(canEdit) || list.length === 0 ? (
+        <Link href="/add" className="block rounded-xl bg-emerald-700 py-3 text-center text-base font-semibold text-white">+ {t("newEntry")}</Link>
+      ) : null}
       <h2 className="pt-2 text-lg font-bold">{t("history")}</h2>
       <EntryList list={list} />
     </div>

@@ -13,6 +13,8 @@ type Data = {
   entries: Entry[];
   /** user ids I share my transactions with */
   myViewers: string[];
+  /** of those, who may also edit */
+  myEditors: string[];
   /** user ids who share their transactions with me */
   sharedWithMe: string[];
   /** Can I change this entry (I'm in it or I recorded it)? Shared ones are read-only. */
@@ -31,7 +33,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [familyId, setFamilyId] = useState<string | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [entries, setEntries] = useState<Entry[]>([]);
-  const [shares, setShares] = useState<{ owner_user: string; viewer_user: string }[]>([]);
+  const [shares, setShares] = useState<{ owner_user: string; viewer_user: string; can_edit: boolean }[]>([]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -60,9 +62,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const [{ data: ppl }, { data: ents }, { data: shr }] = await Promise.all([
         supabase.from("people").select("id,family_id,name,user_id").eq("family_id", fid).order("created_at"),
         supabase.from("entries").select("*").eq("family_id", fid).order("entry_date", { ascending: false }).order("created_at", { ascending: false }),
-        supabase.from("shares").select("owner_user,viewer_user").eq("family_id", fid),
+        supabase.from("shares").select("owner_user,viewer_user,can_edit").eq("family_id", fid),
       ]);
-      setShares((shr ?? []) as { owner_user: string; viewer_user: string }[]);
+      setShares((shr ?? []) as { owner_user: string; viewer_user: string; can_edit: boolean }[]);
       setPeople((ppl ?? []) as Person[]);
       setEntries((ents ?? []) as Entry[]);
     } else {
@@ -84,10 +86,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const me = people.find((p) => p.user_id === userId) ?? null;
   const myViewers = shares.filter((s) => s.owner_user === userId).map((s) => s.viewer_user);
   const sharedWithMe = shares.filter((s) => s.viewer_user === userId).map((s) => s.owner_user);
-  const canEdit = (e: Entry) => e.created_by === userId || (!!me && (e.from_person === me.id || e.to_person === me.id));
+  const editableOwners = shares.filter((s) => s.viewer_user === userId && s.can_edit).map((s) => s.owner_user);
+  const myEditors = shares.filter((s) => s.owner_user === userId && s.can_edit).map((s) => s.viewer_user);
+  const userOf = (pid: string) => people.find((p) => p.id === pid)?.user_id ?? null;
+  const canEdit = (e: Entry) =>
+    e.created_by === userId || (!!me && (e.from_person === me.id || e.to_person === me.id)) ||
+    [e.created_by, userOf(e.from_person), userOf(e.to_person)].some((u) => !!u && editableOwners.includes(u));
 
   return (
-    <DataCtx.Provider value={{ session, ready: authReady && loaded, families, family, people, me, entries, myViewers, sharedWithMe, canEdit, selectFamily, refresh }}>
+    <DataCtx.Provider value={{ session, ready: authReady && loaded, families, family, people, me, entries, myViewers, myEditors, sharedWithMe, canEdit, selectFamily, refresh }}>
       {children}
     </DataCtx.Provider>
   );

@@ -85,6 +85,7 @@ const dict = {
   readingBig: { en: "Reading with AI…", ar: "جارٍ القراءة بالذكاء الاصطناعي…" },
   keepOpen: { en: "This can take 1 to 3 minutes. Please keep this screen open.", ar: "قد يستغرق ذلك من دقيقة إلى ٣ دقائق. أبقِ هذه الشاشة مفتوحة." },
   emptyChat: { en: "No chat text or photos were found in this file", ar: "لم يتم العثور على نص محادثة أو صور في هذا الملف" },
+  noDate: { en: "No date found in the chat. Please set the date.", ar: "لم يُعثر على تاريخ في المحادثة. يرجى تحديد التاريخ." },
   partsFailed: { en: "Some parts could not be read", ar: "تعذّرت قراءة بعض الأجزاء" },
   needPerson: { en: "Add a person first", ar: "أضف شخصاً أولاً" },
   allEntries: { en: "All entries", ar: "كل القيود" },

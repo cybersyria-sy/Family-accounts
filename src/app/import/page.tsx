@@ -10,7 +10,8 @@ import { supabase, AssetType } from "@/lib/supabase";
 import { CURRENCIES, KARATS } from "@/lib/assets";
 import type { ExtractResultT } from "@/lib/extractSchema";
 
-type Img = { media_type: "image/jpeg"; data: string; preview: string };
+type Img = { media_type: "image/jpeg"; data: string; preview: string; name?: string };
+type Note = { date: string; text: string };
 type Draft = {
   include: boolean;
   from: string; // person id, or "new:<name>"
@@ -27,7 +28,20 @@ type Draft = {
   date: string;
   note: string;
   low: boolean;
+  comment: string;
 };
+
+/** Accept 2024-10-5, 2024/10/05, 5/10/2024 (day first) and return YYYY-MM-DD, or "" */
+function normDate(raw: string): string {
+  const v = (raw || "").trim().replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+  let m = v.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  let y, mo, d;
+  if (m) [y, mo, d] = [m[1], m[2], m[3]];
+  else if ((m = v.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})/))) [y, mo, d] = [m[3], m[2], m[1]];
+  else return "";
+  const out = `${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  return isNaN(Date.parse(out)) ? "" : out;
+}
 
 /** Shrink a photo so uploads stay small and fast. */
 async function toJpeg(file: Blob, max = 1600): Promise<Img> {
@@ -41,7 +55,7 @@ async function toJpeg(file: Blob, max = 1600): Promise<Img> {
   return { media_type: "image/jpeg", data: url.split(",")[1], preview: url };
 }
 
-async function readChatFile(file: File): Promise<{ text: string; images: Blob[] }> {
+async function readChatFile(file: File): Promise<{ text: string; images: { blob: Blob; name: string }[] }> {
   if (file.name.toLowerCase().endsWith(".zip")) {
     const zip = await JSZip.loadAsync(file);
     const files = Object.values(zip.files).filter((f) => !f.dir);
@@ -49,7 +63,7 @@ async function readChatFile(file: File): Promise<{ text: string; images: Blob[] 
     const imgs = files.filter((f) => /\.(jpe?g|png|webp)$/i.test(f.name)).slice(0, 6);
     return {
       text: txt ? await txt.async("string") : "",
-      images: await Promise.all(imgs.map((f) => f.async("blob"))),
+      images: await Promise.all(imgs.map(async (f) => ({ blob: await f.async("blob"), name: f.name.split("/").pop() ?? f.name }))),
     };
   }
   return { text: await file.text(), images: [] };
@@ -104,7 +118,7 @@ function ImportBody() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
+  const [warnings, setWarnings] = useState<Note[]>([]);
   const [progress, setProgress] = useState("");
 
   if (!me || !family) return null;
@@ -137,7 +151,7 @@ function ImportBody() {
         lang,
       };
       const jobs: { images?: { media_type: string; data: string }[]; text?: string }[] = [];
-      const allImgs = [...images, ...chatImages].map(({ media_type, data }) => ({ media_type, data }));
+      const allImgs = [...images, ...chatImages].map(({ media_type, data, name }) => ({ media_type, data, name }));
       for (let i = 0; i < allImgs.length; i += 2) jobs.push({ images: allImgs.slice(i, i + 2) });
       for (const part of splitText([chatText, pasted].filter(Boolean).join("\n\n"), 12000)) jobs.push({ text: part });
 
@@ -167,15 +181,14 @@ function ImportBody() {
 
       if (failed.includes("not_configured")) { setErr(t("aiNotConfigured")); return; }
       if (!results.length) { setErr(`${t("error")} (${[...new Set(failed)].join(", ")})`); return; }
-      const result: ExtractResultT = {
-        entries: results.flatMap((r) => r.entries).sort((a, b) => a.date.localeCompare(b.date)),
-        warnings: [
-          ...(failed.length ? [`${t("partsFailed")}: ${failed.length} / ${jobs.length} (${[...new Set(failed)].join(", ")})`] : []),
-          ...results.flatMap((r) => r.warnings ?? []),
-        ],
-      };
-      setWarnings(result.warnings);
-      setDrafts(result.entries.map((e) => ({
+      // Undated items first (they need attention), then oldest to newest
+      const byDate = (a: string, b: string) => (a ? (b ? a.localeCompare(b) : 1) : b ? -1 : 0);
+      const entries = results.flatMap((r) => r.entries).map((e) => ({ ...e, date: normDate(e.date) })).sort((a, b) => byDate(a.date, b.date));
+      setWarnings([
+        ...(failed.length ? [{ date: "", text: `${t("partsFailed")}: ${failed.length} / ${jobs.length} (${[...new Set(failed)].join(", ")})` }] : []),
+        ...results.flatMap((r) => r.warnings ?? []).map((w) => (typeof w === "string" ? { date: "", text: w } : { date: normDate(w.date), text: w.text })),
+      ]);
+      setDrafts(entries.map((e) => ({
         include: e.confidence !== "low",
         from: resolveName(e.from_name),
         to: resolveName(e.to_name),
@@ -188,9 +201,10 @@ function ImportBody() {
         to_asset_code: e.to_asset_code ?? "",
         to_amount: e.to_amount != null ? String(e.to_amount) : "",
         quote: e.source_quote ?? "",
-        date: /^\d{4}-\d{2}-\d{2}$/.test(e.date) ? e.date : new Date().toISOString().slice(0, 10),
+        date: e.date,
         note: e.note,
-        low: e.confidence === "low",
+        low: e.confidence === "low" || !e.date,
+        comment: e.comment ?? "",
       })));
     } catch (e) {
       setErr(`${t("error")} (${e instanceof Error ? e.message : "?"})`);
@@ -206,6 +220,8 @@ function ImportBody() {
     if (!drafts) return;
     setBusy(true); setErr("");
     const chosen = drafts.filter((d) => d.include && Number(d.amount) > 0 && d.from !== d.to);
+    const undated = chosen.findIndex((d) => !d.date);
+    if (undated !== -1) { setBusy(false); setErr(`#${drafts.indexOf(chosen[undated]) + 1}: ${t("noDate")}`); return; }
     // Create any new people first
     const newNames = [...new Set(chosen.flatMap((d) => [d.from, d.to]).filter((x) => x.startsWith("new:")).map((x) => x.slice(4)))];
     const ids = new Map<string, string>();
@@ -247,15 +263,25 @@ function ImportBody() {
     ];
     const sel = "w-full rounded-xl border border-stone-300 bg-white px-2 py-2 text-base";
     const count = drafts.filter((d) => d.include).length;
+    // Place each general note just before the first entry dated after it (undated notes go first)
+    const noteSlot = (w: Note) => {
+      if (!w.date) return 0;
+      const k = drafts.findIndex((d) => d.date && d.date > w.date);
+      return k === -1 ? drafts.length : k;
+    };
+    const notesBefore = (i: number) => warnings.filter((w) => noteSlot(w) === i);
     return (
       <div className="space-y-4">
         <h2 className="text-xl font-bold">{t("reviewTitle")}</h2>
         <p className="text-stone-600">{drafts.length ? t("reviewHelp") : t("noneFound")}</p>
-        {warnings.length > 0 && (
-          <Card className="bg-amber-50 ring-amber-200"><ul className="list-disc space-y-1 ps-5 text-amber-900">{warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></Card>
-        )}
         {drafts.map((d, i) => (
-          <Card key={i} className={`space-y-2 ${d.include ? "" : "opacity-50"} ${d.low ? "ring-amber-300" : ""}`}>
+          <div key={i} className="space-y-4">
+          {notesBefore(i).map((w, k) => (
+            <div key={k} className="rounded-xl border-s-4 border-amber-400 bg-amber-50 p-3 text-sm text-amber-900">
+              💬 {w.date && <span className="font-semibold" dir="ltr">{w.date} · </span>}{w.text}
+            </div>
+          ))}
+          <Card className={`space-y-2 ${d.include ? "" : "opacity-50"} ${d.low ? "ring-amber-300" : ""}`}>
             <label className="flex items-center gap-2 font-semibold">
               <input type="checkbox" className="h-5 w-5" checked={d.include} onChange={(e) => update(i, { include: e.target.checked })} />
               #{i + 1} {d.low && <span className="text-sm text-amber-700">· {t("checkThis")}</span>}
@@ -304,8 +330,16 @@ function ImportBody() {
                 </>
               )}
             </div>
+            {!d.date && <p className="text-sm font-semibold text-red-700">⚠️ {t("noDate")}</p>}
+            {d.comment && <p className="rounded-lg bg-amber-50 p-2 text-sm text-amber-900">💬 {d.comment}</p>}
             {d.quote && <p className="rounded-lg bg-stone-50 p-2 text-sm text-stone-600"><span className="text-stone-400">{t("sourceText")}: </span>{d.quote}</p>}
           </Card>
+          </div>
+        ))}
+        {notesBefore(drafts.length).map((w, k) => (
+          <div key={k} className="rounded-xl border-s-4 border-amber-400 bg-amber-50 p-3 text-sm text-amber-900">
+            💬 {w.date && <span className="font-semibold" dir="ltr">{w.date} · </span>}{w.text}
+          </div>
         ))}
         {err && <p className="text-red-700">{err}</p>}
         <div className="flex gap-2">
@@ -352,13 +386,13 @@ function ImportBody() {
           const f = e.target.files?.[0]; e.target.value = "";
           if (!f) return;
           setErr(""); setChatName(`⏳ ${f.name}`);
-          let text = "", blobs: Blob[] = [];
+          let text = "", blobs: { blob: Blob; name: string }[] = [];
           try { ({ text, images: blobs } = await readChatFile(f)); }
           catch (er) { setChatName(""); setErr(`${t("error")} (${er instanceof Error ? er.message : "file"})`); return; }
           if (!text.trim() && !blobs.length) { setChatName(""); setErr(t("emptyChat")); return; }
           setChatName(f.name); setChatText(text);
           const imgs: Img[] = [];
-          for (const b of blobs) { try { imgs.push(await toJpeg(b, 1280)); } catch {} }
+          for (const b of blobs) { try { imgs.push({ ...(await toJpeg(b.blob, 1280)), name: b.name }); } catch {} }
           setChatImages(imgs);
           const map: Record<string, string> = {};
           const title = f.name.replace(/\.(zip|txt)$/i, "").replace(/^WhatsApp Chat( with)?\s*-?\s*/i, "").replace(/^محادثة واتساب( مع)?\s*-?\s*/, "");

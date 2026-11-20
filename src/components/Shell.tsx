@@ -34,6 +34,7 @@ export function Shell({ children, title, allowNoFamily = false }: { children: Re
   const nav = [
     { href: "/", label: t("home"), icon: "⌂" },
     { href: "/add", label: t("add"), icon: "+" },
+    { href: "/import", label: t("importNav"), icon: "📷" },
     { href: "/settings", label: t("settings"), icon: "⚙" },
   ];
 

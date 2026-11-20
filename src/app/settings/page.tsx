@@ -14,7 +14,7 @@ export default function SettingsPage() {
 
 function SettingsBody() {
   const { t, lang, setLang } = useI18n();
-  const { family, families, people, me, entries, refresh, selectFamily } = useData();
+  const { family, families, people, me, entries, refresh, selectFamily, myViewers } = useData();
   const offerUndo = useUndo();
   const [newName, setNewName] = useState("");
   const [copied, setCopied] = useState(false);
@@ -40,6 +40,16 @@ function SettingsBody() {
     const { error } = await supabase.from("people").delete().eq("id", id);
     await refresh();
     if (!error) offerUndo("personRemoved", async () => check(await supabase.from("people").insert({ id: p.id, family_id: p.family_id, name: p.name })));
+  };
+
+  const setSharing = async (viewer: string, on: boolean) => {
+    setErr("");
+    const add = () => supabase.from("shares").insert({ family_id: family.id, viewer_user: viewer });
+    const del = () => supabase.from("shares").delete().eq("family_id", family.id).eq("owner_user", me.user_id!).eq("viewer_user", viewer);
+    const { error } = await (on ? add() : del());
+    if (error) return setErr(error.message);
+    await refresh();
+    offerUndo(on ? "sharingOn" : "sharingOff", async () => check(await (on ? del() : add())));
   };
 
   const copy = async () => {
@@ -76,6 +86,30 @@ function SettingsBody() {
           <Button>{t("addPerson")}</Button>
         </form>
         {err && <p className="text-red-700">{err}</p>}
+      </Card>
+
+      <Card className="space-y-3">
+        <h2 className="text-lg font-bold">👁 {t("shareMine")}</h2>
+        <p className="text-stone-600">{t("shareHelp")}</p>
+        {people.filter((p) => p.user_id && p.id !== me.id).length === 0 ? (
+          <p className="text-sm text-stone-500">{t("shareNobody")}</p>
+        ) : (
+          <ul className="divide-y divide-stone-100">
+            {people.filter((p) => p.user_id && p.id !== me.id).map((p) => {
+              const on = myViewers.includes(p.user_id!);
+              return (
+                <li key={p.id} className="flex items-center gap-3 py-2">
+                  <Avatar name={p.name} />
+                  <div className="flex-1">
+                    <p className="font-semibold">{p.name}</p>
+                    <p className={`text-sm ${on ? "text-emerald-700" : "text-stone-500"}`}>{on ? t("canSeeAll") : t("cannotSee")}</p>
+                  </div>
+                  <Button variant={on ? "ghost" : "primary"} onClick={() => setSharing(p.user_id!, !on)}>{on ? t("stopSharing") : t("shareWith")}</Button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </Card>
 
       <Card className="space-y-3">

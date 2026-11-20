@@ -9,7 +9,7 @@ import { useUndo, check } from "@/lib/undo";
 
 export function EntryList({ list, running }: { list: Entry[]; running?: Map<string, Map<string, number>> }) {
   const { t, lang } = useI18n();
-  const { people, me, refresh, entries } = useData();
+  const { people, me, refresh, entries, canEdit } = useData();
   const offerUndo = useUndo();
   const name = (id: string) => (id === me?.id ? t("you") : people.find((p) => p.id === id)?.name ?? "?");
 
@@ -63,10 +63,14 @@ export function EntryList({ list, running }: { list: Entry[]; running?: Map<stri
                   ))}
                 </div>
               )}
-              <div className="flex gap-4 pt-1 text-sm">
-                <Link href={`/add?edit=${e.id}`} className="font-semibold text-emerald-700">{t("edit")}</Link>
-                <button onClick={() => remove(e.id)} className="font-semibold text-red-700">{t("delete")}</button>
-              </div>
+              {canEdit(e) ? (
+                <div className="flex gap-4 pt-1 text-sm">
+                  <Link href={`/add?edit=${e.id}`} className="font-semibold text-emerald-700">{t("edit")}</Link>
+                  <button onClick={() => remove(e.id)} className="font-semibold text-red-700">{t("delete")}</button>
+                </div>
+              ) : (
+                <p className="pt-1 text-xs text-stone-400">👁 {t("viewOnly")}</p>
+              )}
             </Card>
           </li>
         );

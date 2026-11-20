@@ -13,9 +13,10 @@ export default function Home() {
 
 function HomeBody() {
   const { t, lang } = useI18n();
-  const { people, me, entries } = useData();
+  const { people, me, entries, sharedWithMe } = useData();
   if (!me) return null;
   const others = people.filter((p) => p.id !== me.id);
+  const sharers = people.filter((p) => p.user_id && sharedWithMe.includes(p.user_id));
   const { owed, owe } = totals(entries, me.id, people);
 
   const Total = ({ title, m, color }: { title: string; m: Map<string, number>; color: string }) => (
@@ -49,6 +50,21 @@ function HomeBody() {
           </Card>
         </Link>
       ))}
+
+      {sharers.length > 0 && (
+        <>
+          <h2 className="pt-2 text-lg font-bold">👁 {t("sharedWithYou")}</h2>
+          {sharers.map((p) => (
+            <Link key={p.id} href={`/view/${p.id}`} className="block">
+              <Card className="flex items-center gap-3 active:bg-stone-50">
+                <Avatar name={p.name} />
+                <p className="flex-1 text-lg font-semibold">{p.name}</p>
+                <span className="text-2xl text-stone-300 rtl:rotate-180">›</span>
+              </Card>
+            </Link>
+          ))}
+        </>
+      )}
     </div>
   );
 }

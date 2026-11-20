@@ -351,7 +351,11 @@ function ImportBody() {
         <input ref={chatRef} type="file" accept=".txt,.zip,text/plain,application/zip" hidden onChange={async (e) => {
           const f = e.target.files?.[0]; e.target.value = "";
           if (!f) return;
-          const { text, images: blobs } = await readChatFile(f);
+          setErr(""); setChatName(`⏳ ${f.name}`);
+          let text = "", blobs: Blob[] = [];
+          try { ({ text, images: blobs } = await readChatFile(f)); }
+          catch (er) { setChatName(""); setErr(`${t("error")} (${er instanceof Error ? er.message : "file"})`); return; }
+          if (!text.trim() && !blobs.length) { setChatName(""); setErr(t("emptyChat")); return; }
           setChatName(f.name); setChatText(text);
           const imgs: Img[] = [];
           for (const b of blobs) { try { imgs.push(await toJpeg(b, 1280)); } catch {} }
@@ -398,6 +402,16 @@ function ImportBody() {
 
       {err && <p className="text-red-700">{err}</p>}
       <Button className="w-full" disabled={busy || !hasInput} onClick={read}>{busy ? `${t("reading")} ${progress}` : `✨ ${t("readWithAi")}`}</Button>
+      {busy && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
+          <div className="w-full max-w-sm space-y-3 rounded-2xl bg-white p-6 text-center shadow-xl">
+            <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-emerald-200 border-t-emerald-700" />
+            <p className="font-semibold">{t("readingBig")}</p>
+            {progress && <p className="text-2xl font-bold" dir="ltr">{progress}</p>}
+            <p className="text-sm text-stone-600">{t("keepOpen")}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

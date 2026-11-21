@@ -14,7 +14,7 @@ export type Entry = {
   family_id: string;
   from_person: string;
   to_person: string;
-  kind: "loan" | "repayment" | "conversion";
+  kind: "loan" | "repayment" | "conversion" | "opening";
   asset_type: AssetType;
   asset_code: string;
   unit: string;

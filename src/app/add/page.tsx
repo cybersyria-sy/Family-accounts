@@ -10,13 +10,14 @@ import { useI18n, Key } from "@/lib/i18n";
 import { supabase, Entry } from "@/lib/supabase";
 import { CURRENCIES, balancesBetween, formatAmount, fromKey } from "@/lib/assets";
 
-type Action = "borrowed" | "lent" | "iRepaid" | "theyRepaid" | "convert";
+type Action = "borrowed" | "lent" | "iRepaid" | "theyRepaid" | "convert" | "opening";
 const ACTIONS: { id: Action; label: Key }[] = [
   { id: "borrowed", label: "iBorrowed" },
   { id: "lent", label: "iLent" },
   { id: "iRepaid", label: "iRepaid" },
   { id: "theyRepaid", label: "theyRepaid" },
   { id: "convert", label: "convertAction" },
+  { id: "opening", label: "openingAction" },
 ];
 
 export default function AddPage() {
@@ -65,6 +66,7 @@ function EntryForm() {
       const iGave = editing.from_person === me.id;
       setPerson(iGave ? editing.to_person : editing.from_person);
       if (editing.kind === "conversion") { setAction("convert"); setTheyOweMe(iGave); }
+      else if (editing.kind === "opening") { setAction("opening"); setTheyOweMe(iGave); }
       else setAction(editing.kind === "loan" ? (iGave ? "lent" : "borrowed") : (iGave ? "iRepaid" : "theyRepaid"));
     }
     setAsset({ type: editing.asset_type, code: editing.asset_code, unit: editing.unit });
@@ -91,6 +93,7 @@ function EntryForm() {
   }
   const involvesMe = !editing || editing.from_person === me.id || editing.to_person === me.id;
   const isConvert = action === "convert";
+  const isOpening = action === "opening";
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,11 +106,11 @@ function EntryForm() {
 
     let people_: Record<string, string> = {};
     if (involvesMe) {
-      const iGave = isConvert ? theyOweMe : action === "lent" || action === "iRepaid";
+      const iGave = isConvert || isOpening ? theyOweMe : action === "lent" || action === "iRepaid";
       people_ = { from_person: iGave ? me.id : person, to_person: iGave ? person : me.id };
     }
     let conv: Record<string, unknown> = { to_asset_type: null, to_asset_code: null, to_unit: null, to_amount: null };
-    let kind: string = action === "borrowed" || action === "lent" ? "loan" : "repayment";
+    let kind: string = isOpening ? "opening" : action === "borrowed" || action === "lent" ? "loan" : "repayment";
     if (isConvert || editing?.kind === "conversion") {
       const toAmt = parseAmount(toAmount);
       if (!(toAmt > 0)) return setErr(t("convertTo"));
@@ -158,7 +161,7 @@ function EntryForm() {
             <div className="grid grid-cols-2 gap-2">
               {ACTIONS.map((a) => (
                 <button type="button" key={a.id} onClick={() => setAction(a.id)}
-                  className={`rounded-xl px-3 py-4 text-base font-semibold ring-1 ${a.id === "convert" ? "col-span-2" : ""} ${action === a.id ? "bg-emerald-700 text-white ring-emerald-700" : "bg-white ring-stone-300"}`}>
+                  className={`rounded-xl px-3 py-4 text-base font-semibold ring-1 ${a.id === "convert" || a.id === "opening" ? "col-span-2" : ""} ${action === a.id ? "bg-emerald-700 text-white ring-emerald-700" : "bg-white ring-stone-300"}`}>
                   {t(a.label)}
                 </button>
               ))}
@@ -171,6 +174,16 @@ function EntryForm() {
             </div>
           </section>
         </>
+      )}
+
+      {isOpening && (
+        <section className="space-y-2">
+          <p className="text-stone-600">{t("openingHelp")}</p>
+          <div className="flex gap-2">
+            <Chip active={theyOweMe} onClick={() => setTheyOweMe(true)}>{t("theyOweMe")}</Chip>
+            <Chip active={!theyOweMe} onClick={() => setTheyOweMe(false)}>{t("iOweThem")}</Chip>
+          </div>
+        </section>
       )}
 
       {isConvert && (

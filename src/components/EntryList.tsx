@@ -47,7 +47,9 @@ export function EntryList({ list, running }: { list: Entry[]; running?: Map<stri
                 <span className="shrink-0 text-sm text-stone-500" dir="ltr">{e.entry_date}</span>
               </div>
               <p className="text-stone-700">
-                {isConv
+                {e.kind === "opening"
+                  ? `🏁 ${t("kindOpening")}: ${e.to_person === me?.id ? `${t("youOwe")} ${name(e.from_person)}` : e.from_person === me?.id ? `${name(e.to_person)} ${t("owesYou")}` : t("owesX").replace("{a}", name(e.to_person)).replace("{b}", name(e.from_person))}`
+                  : isConv
                   ? `${t("kindConvert")}: ${name(e.to_person)} → ${name(e.from_person)}`
                   : `${name(e.from_person)} ${verb} ${name(e.to_person)}`}
               </p>

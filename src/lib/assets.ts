@@ -71,8 +71,11 @@ export function balancesBetween(entries: Entry[], me: string, other: string): Ma
 
 /** For a list of entries between me and other, the balance of each affected asset right after each entry. */
 export function runningBalances(entries: Entry[], me: string, other: string): Map<string, Map<string, number>> {
+  // Opening balances come first on their day
   const sorted = [...entries].sort((x, y) =>
-    x.entry_date === y.entry_date ? x.created_at.localeCompare(y.created_at) : x.entry_date.localeCompare(y.entry_date));
+    x.entry_date !== y.entry_date ? x.entry_date.localeCompare(y.entry_date)
+      : (x.kind === "opening") !== (y.kind === "opening") ? (x.kind === "opening" ? -1 : 1)
+      : x.created_at.localeCompare(y.created_at));
   const bal = new Map<string, number>();
   const out = new Map<string, Map<string, number>>();
   for (const e of sorted) {
